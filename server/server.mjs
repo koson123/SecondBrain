@@ -20,6 +20,7 @@ import { resolve, join, extname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openStore, categories, areas } from "./store.mjs";
 import { parseExport, hash } from "./importer.mjs";
+import { resolveStaticPath } from "./static.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const mime = {
@@ -674,9 +675,20 @@ export function createApp({
       if (!["GET", "HEAD"].includes(method))
         return json(res, 405, { error: "Method not allowed" });
       const dist = join(root, "dist");
-      const safe = resolve(dist, "." + decodeURIComponent(path));
-      if (safe !== dist && !safe.startsWith(dist + "/"))
-        return json(res, 404, { error: "Not found" });
+      const safe = resolveStaticPath(dist, path);
+      if (!safe) return json(res, 404, { error: "Not found" });
+      if (
+        !(existsSync(safe) && statSync(safe).isFile()) &&
+        (extname(path) || path.startsWith("/assets/"))
+      ) {
+        res.writeHead(404, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        return res.end(
+          "Asset not found. Rebuild with npm run build and reload the page.",
+        );
+      }
       const file =
         existsSync(safe) && statSync(safe).isFile()
           ? safe

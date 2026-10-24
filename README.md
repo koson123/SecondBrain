@@ -115,6 +115,10 @@ Tests exercise auth/origin rejection, idempotency, conflicts, Journal search iso
 
 ## Implementation status
 
+### Blank page or asset MIME errors on Windows
+
+Pull the latest `feat/private-second-brain` branch, stop the old server, run `npm run build`, then `npm start` and reload `http://localhost:3000` with Ctrl+Shift+R. The server uses platform-aware path containment for Windows backslashes and POSIX slashes. Missing hashed assets return a real 404 instead of the application HTML. Run the app through its Node server, not by opening HTML directly or using Live Server.
+
 This is a working initial implementation, not a claim that every item in the [blueprint](docs/BLUEPRINT.md) is complete. See [status and follow-ups](docs/STATUS.md) for remaining work and deployment prerequisites.
 
 Stack: React + TypeScript + Vite; React Flow for spatial exploration; Node.js HTTP API; built-in SQLite/FTS5; JSZip for controlled imports/portable exports. Dependencies are pinned in `package-lock.json`. No graph database or external search service is required.

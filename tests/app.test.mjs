@@ -117,8 +117,25 @@ test("authentication, origin checks, persistence, idempotent create, conflicts, 
     rootResponse.status,
     existsSync(new URL("../dist/index.html", import.meta.url)) ? 200 : 503,
   );
-  if (rootResponse.status === 200)
-    assert.match(await rootResponse.text(), /id="root"/);
+  if (rootResponse.status === 200) {
+    const html = await rootResponse.text();
+    assert.match(html, /id="root"/);
+    const base = "http://127.0.0.1:" + h.app.server.address().port;
+    for (const asset of html.match(/\/assets\/[^"\s]+/g) || []) {
+      const response = await fetch(base + asset);
+      assert.equal(response.status, 200);
+      assert.match(
+        response.headers.get("content-type"),
+        asset.endsWith(".css") ? /text\/css/ : /javascript/,
+      );
+    }
+    const manifest = await fetch(base + "/manifest.webmanifest");
+    assert.equal(manifest.status, 200);
+    assert.match(manifest.headers.get("content-type"), /manifest\+json/);
+    const missing = await fetch(base + "/assets/does-not-exist.css");
+    assert.equal(missing.status, 404);
+    assert.match(missing.headers.get("content-type"), /text\/plain/);
+  }
 
   assert.equal(
     (
