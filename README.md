@@ -23,14 +23,36 @@ The example configuration is for HTTP on your own computer. For real use, put th
 
 For frontend development, run the API as above and `npm run dev` in a second terminal. Set `APP_ORIGIN=http://localhost:5173` while using the Vite development URL.
 
+## Pages and navigation
+
+Each section has its own URL and page component. You can bookmark it, open it in a new tab, refresh it, and use browser Back/Forward:
+
+| Page | URL | Layout |
+| --- | --- | --- |
+| Desk | `/` | Capture pad, collection index, and recent notes |
+| Inbox | `/inbox` | Review list with direct Move to actions |
+| Projects | `/projects` | In progress, Paused, and Finished columns |
+| Life areas | `/life` | Journal notebook and ongoing-area index |
+| Journal | `/life/journal` | Dated entries with a writing margin |
+| Ideas | `/ideas` | Paper notes on a pinboard |
+| Knowledge | `/knowledge` | Reference index |
+| Archive | `/archive` | Compact archived-note list |
+| Import | `/imports` | ChatGPT export preview and import |
+| Settings | `/settings` | Account, exports, and protection |
+| Search | `/search?q=...` | Search results with optional Journal scope |
+
+Notes have shareable-with-yourself URLs such as `/ideas?entry=...` (authentication is still required). `?mode=explore` preserves the Connections view. Source-message links include the source ID in the URL. This remains a React application, with dedicated routes and modules rather than one file of state-switched views. `src/main.tsx` only mounts the application; page implementations live in `src/pages/`, and the editor, graph, authentication, and dialogs live in `src/components/`.
+
+The updated visual design uses a paper-and-ink notebook style, a capture sheet, and different layouts for different kinds of content. Light and dark themes are supported. No database migration or deletion is required for the interface update.
+
 ## Everyday use
 
-- **Capture:** type a thought on Overview. It goes to Inbox; categorization is optional.
+- **Capture:** type a note on Desk. It goes to Inbox; categorization is optional.
 - **Organize:** open a card, choose a category, and add optional connections.
 - **Projects:** record the outcome, where you stopped, and the next small step.
 - **Journal:** Life areas → Journal → Write today. Entries are excluded from normal search, rediscovery, and broad connection lists by default.
-- **Explore:** open a category’s Explore view. Start with one thought and a small neighborhood. Follow links, open notes, and drag cards; positions are saved per view. Cross-category links are included. Use the focus selector to start somewhere else.
-- **Rediscover:** the Overview surfaces eligible Ideas. Snooze or stop resurfacing without deleting.
+- **Explore:** open a category’s Connections view. Start with one thought and a small neighborhood. Follow links, open notes, and drag cards; positions are saved per view. Cross-category links are included. Use the focus selector to start somewhere else.
+- **Rediscover:** the Desk surfaces eligible Ideas. Snooze or stop resurfacing without deleting.
 - **Search:** searches note content and the full imported conversation text. Explicitly enable Journal search when wanted.
 - **History:** entries autosave after a pause and preserve revisions. Stale edits are rejected; download your draft, reload the latest revision, or save a conflict copy.
 - **Attachments:** authenticated downloads, maximum 20 MB per file. Files are downloaded rather than executed/rendered inline.
@@ -49,7 +71,7 @@ Original upload bytes, message authors, parent/child relationships, alternate br
 
 ZIP media stays preserved in the original ZIP, available under Settings → Export & sources. This release does **not** extract/render embedded media. JSON-only imports have no attachment bytes. HTML-only exports and unfamiliar schemas fail with a clear error. No automatic account synchronization: future chats need another export.
 
-Preview staging expires after an hour and is discarded on server restart. There is no long-running resumable importer yet; imports run atomically within the configured limit. Very large exports need splitting or a later streaming adapter.
+Preview staging expires after an hour; a restart requires selecting the file again. There is no long-running resumable importer yet; imports run atomically within the configured limit. Very large exports need splitting or a later streaming adapter.
 
 ## Offline capture
 
@@ -107,11 +129,17 @@ Compose binds only to `127.0.0.1:3000` and uses a persistent named volume. Put a
 ```bash
 npm test
 npm run build
+npx playwright install chromium
+npm run test:browser
 ```
 
 Tests exercise auth/origin rejection, idempotency, conflicts, Journal search isolation, JSON/ZIP imports, source revisions, roles/branches, source extraction, attachment persistence, and verified restore/corruption rejection. No real personal export is included in tests.
 
 ## Implementation status
+
+### Blank page or asset MIME errors on Windows
+
+Pull the latest `feat/private-second-brain` branch, stop the old server, run `npm run build`, then `npm start` and reload `http://localhost:3000` with Ctrl+Shift+R. The server uses platform-aware path containment for Windows backslashes and POSIX slashes. Missing hashed assets return a real 404 instead of the application HTML. Run the app through its Node server, not by opening HTML directly or using Live Server.
 
 This is a working initial implementation, not a claim that every item in the [blueprint](docs/BLUEPRINT.md) is complete. See [status and follow-ups](docs/STATUS.md) for remaining work and deployment prerequisites.
 

@@ -1,0 +1,14 @@
+services:
+  secondbrain:
+    build: .
+    restart: unless-stopped
+    environment:
+      SETUP_TOKEN: ${SETUP_TOKEN:?Set a random SETUP_TOKEN in .env}
+      APP_ORIGIN: ${APP_ORIGIN:?Set the exact HTTPS origin}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - brain-data:/data
+volumes:
+  brain-data:
