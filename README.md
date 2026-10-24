@@ -23,14 +23,36 @@ The example configuration is for HTTP on your own computer. For real use, put th
 
 For frontend development, run the API as above and `npm run dev` in a second terminal. Set `APP_ORIGIN=http://localhost:5173` while using the Vite development URL.
 
+## Pages and navigation
+
+Each section has its own URL and page component. You can bookmark it, open it in a new tab, refresh it, and use browser Back/Forward:
+
+| Page | URL | Layout |
+| --- | --- | --- |
+| Desk | `/` | Capture pad, collection index, and recent notes |
+| Inbox | `/inbox` | Review list with direct Move to actions |
+| Projects | `/projects` | In progress, Paused, and Finished columns |
+| Life areas | `/life` | Journal notebook and ongoing-area index |
+| Journal | `/life/journal` | Dated entries with a writing margin |
+| Ideas | `/ideas` | Paper notes on a pinboard |
+| Knowledge | `/knowledge` | Reference index |
+| Archive | `/archive` | Compact archived-note list |
+| Import | `/imports` | ChatGPT export preview and import |
+| Settings | `/settings` | Account, exports, and protection |
+| Search | `/search?q=...` | Search results with optional Journal scope |
+
+Notes have shareable-with-yourself URLs such as `/ideas?entry=...` (authentication is still required). `?mode=explore` preserves the Connections view. Source-message links include the source ID in the URL. This remains a React application, with dedicated routes and modules rather than one file of state-switched views. `src/main.tsx` only mounts the application; page implementations live in `src/pages/`, and the editor, graph, authentication, and dialogs live in `src/components/`.
+
+The updated visual design uses a paper-and-ink notebook style, a capture sheet, and different layouts for different kinds of content. Light and dark themes are supported. No database migration or deletion is required for the interface update.
+
 ## Everyday use
 
-- **Capture:** type a thought on Overview. It goes to Inbox; categorization is optional.
+- **Capture:** type a note on Desk. It goes to Inbox; categorization is optional.
 - **Organize:** open a card, choose a category, and add optional connections.
 - **Projects:** record the outcome, where you stopped, and the next small step.
 - **Journal:** Life areas → Journal → Write today. Entries are excluded from normal search, rediscovery, and broad connection lists by default.
-- **Explore:** open a category’s Explore view. Start with one thought and a small neighborhood. Follow links, open notes, and drag cards; positions are saved per view. Cross-category links are included. Use the focus selector to start somewhere else.
-- **Rediscover:** the Overview surfaces eligible Ideas. Snooze or stop resurfacing without deleting.
+- **Explore:** open a category’s Connections view. Start with one thought and a small neighborhood. Follow links, open notes, and drag cards; positions are saved per view. Cross-category links are included. Use the focus selector to start somewhere else.
+- **Rediscover:** the Desk surfaces eligible Ideas. Snooze or stop resurfacing without deleting.
 - **Search:** searches note content and the full imported conversation text. Explicitly enable Journal search when wanted.
 - **History:** entries autosave after a pause and preserve revisions. Stale edits are rejected; download your draft, reload the latest revision, or save a conflict copy.
 - **Attachments:** authenticated downloads, maximum 20 MB per file. Files are downloaded rather than executed/rendered inline.

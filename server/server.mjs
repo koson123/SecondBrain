@@ -305,7 +305,7 @@ export function createApp({
           return json(res, 200, {
             entries: db
               .prepare(
-                `SELECT * FROM entries WHERE ${filters.join(" AND ")} ORDER BY updated DESC LIMIT ? OFFSET ?`,
+                `SELECT * FROM entries WHERE ${filters.join(" AND ")} ORDER BY ${area === "Journal" ? "date DESC, created DESC" : "updated DESC"} LIMIT ? OFFSET ?`,
               )
               .all(...args, limit, offset),
             total,

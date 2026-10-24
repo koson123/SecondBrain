@@ -2,7 +2,7 @@
 
 ## Working in the initial release
 
-- Six categories, Journal nested in Life areas, calm responsive Overview, light/dark themes.
+- Six categories, Journal nested in Life areas, routed notebook/board pages, responsive Desk, light/dark themes.
 - SQLite persistence, one owner, password hashing, sessions, origin checks, throttled sign-in, authenticated attachment downloads.
 - Quick capture, editable entries, project handoffs, Journal dates, category changes, archive, reversible trash, history restore.
 - Full-text note and conversation search, Journal excluded unless explicitly requested.
@@ -10,6 +10,8 @@
 - Inbox import of JSON or ZIP ChatGPT exports, preview, account namespaces, original upload retention, source branches/roles, duplicate handling, revised source history, manual message extraction and source links.
 - IndexedDB pending captures, local editor drafts, conflict rejection and recovery-copy actions, offline text capture screen, pending export.
 - Consistent snapshots, manifests, verified restore, portable ZIP export/import, Docker packaging, separate-device/off-site restic runner.
+
+- Dedicated page URLs, page modules, browser navigation, search URLs, and entry/source deep links.
 
 ## Not yet complete compared with the full blueprint
 
