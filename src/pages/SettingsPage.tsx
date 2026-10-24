@@ -22,8 +22,12 @@ export function SettingsPanel({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    api("/protection").then(setProtection);
-    api("/imports").then(setImports);
+    api("/protection")
+      .then(setProtection)
+      .catch((e) => setError(e.message));
+    api("/imports")
+      .then(setImports)
+      .catch((e) => setError(e.message));
   }, []);
   const Frame = page ? PageFrame : Modal;
   return (

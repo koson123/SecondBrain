@@ -1,5 +1,15 @@
-import { readFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
-import { resolve, join, dirname } from "node:path";
+import {
+  readFileSync,
+  mkdirSync,
+  copyFileSync,
+  existsSync,
+  rmSync,
+  renameSync,
+  mkdtempSync,
+  lstatSync,
+} from "node:fs";
+import { resolve, join, dirname, basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { hash } from "../server/importer.mjs";
 
@@ -16,31 +26,74 @@ export function restore(snapshot, target) {
   if (
     manifest.format !== 1 ||
     manifest.schema !== 1 ||
-    !manifest.files?.["brain.sqlite"]
+    !manifest.files?.["brain.sqlite"] ||
+    typeof manifest.files !== "object" ||
+    Array.isArray(manifest.files)
   )
     throw new Error("Unsupported or incomplete manifest");
   for (const [file, digest] of Object.entries(manifest.files)) {
     if (file !== "brain.sqlite" && !/^objects\/[a-f0-9]{64}$/.test(file))
       throw new Error("Unsafe manifest path");
-    if (hash(readFileSync(join(snapshot, file))) !== digest)
+    if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest))
+      throw new Error("Invalid manifest checksum");
+    const path = join(snapshot, file);
+    if (!lstatSync(path).isFile() || lstatSync(path).isSymbolicLink())
+      throw new Error("Backup object must be a regular file");
+    if (hash(readFileSync(path)) !== digest)
       throw new Error("Checksum mismatch: " + file);
   }
-  mkdirSync(target, { recursive: true, mode: 0o700 });
-  for (const file of Object.keys(manifest.files)) {
-    mkdirSync(dirname(join(target, file)), { recursive: true, mode: 0o700 });
-    copyFileSync(join(snapshot, file), join(target, file));
-  }
-  const db = new DatabaseSync(join(target, "brain.sqlite"));
+  mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+  const stage = mkdtempSync(
+    join(dirname(target), "." + basename(target) + "-restore-"),
+  );
   try {
-    if (db.prepare("PRAGMA integrity_check").get().integrity_check !== "ok")
-      throw new Error("Database integrity check failed");
-    db.exec("DELETE FROM sessions");
-  } finally {
-    db.close();
+    for (const file of Object.keys(manifest.files)) {
+      mkdirSync(dirname(join(stage, file)), { recursive: true, mode: 0o700 });
+      copyFileSync(join(snapshot, file), join(stage, file));
+    }
+    const db = new DatabaseSync(join(stage, "brain.sqlite"));
+    try {
+      if (db.prepare("PRAGMA integrity_check").get().integrity_check !== "ok")
+        throw new Error("Database integrity check failed");
+      if (db.prepare("PRAGMA foreign_key_check").all().length)
+        throw new Error("Database has broken references");
+      if (
+        db.prepare("SELECT value FROM meta WHERE key='schema'").get()?.value !==
+        "1"
+      )
+        throw new Error("Unsupported database schema");
+      const required = [
+        ...db
+          .prepare("SELECT hash FROM attachments")
+          .all()
+          .map((a) => a.hash),
+        ...db
+          .prepare("SELECT original FROM imports")
+          .all()
+          .map((i) => i.original),
+      ];
+      for (const digest of required)
+        if (!manifest.files["objects/" + digest])
+          throw new Error(
+            "Manifest omits a referenced attachment or import object: " +
+              digest,
+          );
+      db.exec("DELETE FROM sessions; PRAGMA wal_checkpoint(TRUNCATE);");
+    } finally {
+      db.close();
+    }
+    if (existsSync(target))
+      throw new Error(
+        "Restore target was created by another process; refusing to overwrite it",
+      );
+    renameSync(stage, target);
+    return target;
+  } catch (error) {
+    rmSync(stage, { recursive: true, force: true });
+    throw error;
   }
-  return target;
 }
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     if (!process.argv[2] || !process.argv[3])
       throw new Error(
@@ -49,8 +102,8 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     console.log(
       "Verified and restored to " + restore(process.argv[2], process.argv[3]),
     );
-  } catch (e) {
-    console.error(e.message);
+  } catch (error) {
+    console.error(error.message);
     process.exitCode = 1;
   }
 }

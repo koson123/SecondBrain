@@ -2383,3 +2383,20 @@ main {
     transform: none;
   }
 }
+
+h1,
+h2,
+h3,
+strong,
+.message-text {
+  overflow-wrap: anywhere;
+}
+
+.project-note,
+.inbox-content,
+.knowledge-row,
+.journal-row > button,
+.archive-list > button {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

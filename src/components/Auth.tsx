@@ -25,7 +25,7 @@ export function Auth({ setup, onDone }: any) {
             setBusy(true);
             try {
               await send(setup ? "/setup" : "/login", { password, token });
-              onDone();
+              await onDone();
             } catch (e: any) {
               setError(e.message);
             } finally {

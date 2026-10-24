@@ -18,7 +18,11 @@
     "portable-export": "node --env-file-if-exists=.env scripts/portable.mjs export",
     "portable-import": "node --env-file-if-exists=.env scripts/portable.mjs import",
     "test:browser": "node tests/browser.mjs",
-    "format:check": "prettier --check src server scripts/*.mjs tests *.json vite.config.ts index.html public/sw.js"
+    "format:check": "prettier --check src server scripts/*.mjs tests *.json vite.config.ts index.html public/sw.js",
+    "test:browser:regression": "node --test tests/browser-regression.mjs",
+    "test:all": "npm run build && npm test && npm run test:browser && npm run test:browser:regression",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude=tests/** tests/*.test.mjs",
+    "test:scale": "node tests/scale.mjs"
   },
   "repository": {
     "type": "git",

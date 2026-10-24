@@ -6,6 +6,9 @@ export const destinations = {
   Ideas: "/ideas",
   Knowledge: "/knowledge",
   Archive: "/archive",
+  Imports: "/imports",
+  Settings: "/settings",
+  Search: "/search",
 };
 export function routeFor(view, area = "") {
   return (

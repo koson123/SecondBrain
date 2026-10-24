@@ -44,12 +44,33 @@ export function openStore(dir) {
       )
       .run(e.id, e.revision, JSON.stringify(e), new Date().toISOString());
   function create(input) {
+    assertObject(input);
     const id = input.id || randomUUID();
-    if (get(id)) return get(id);
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id))
+      throw new Error("Invalid entry id");
     const e = validate(input);
+    if (get(id)) {
+      const first = db
+        .prepare(
+          "SELECT snapshot FROM revisions WHERE entryId=? ORDER BY id LIMIT 1",
+        )
+        .get(id);
+      const original = first ? JSON.parse(first.snapshot) : get(id);
+      if (
+        Object.keys(e).some((key) => e[key] !== original[key]) ||
+        (input.sourceId || null) !== (original.sourceId || null)
+      )
+        throw Object.assign(
+          new Error(
+            "This capture ID already belongs to different content. Save the new thought with a new ID.",
+          ),
+          { status: 409 },
+        );
+      return get(id);
+    }
     const now = new Date().toISOString();
     db.prepare(
-      `INSERT INTO entries(id,title,body,category,type,area,status,goal,handoff,nextAction,date,created,updated,sourceId) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO entries(id,title,body,category,type,area,status,goal,handoff,nextAction,date,created,updated,sourceId,deleted,snooze,hidden) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
       id,
       e.title,
@@ -65,11 +86,15 @@ export function openStore(dir) {
       now,
       now,
       input.sourceId || null,
+      e.deleted,
+      e.snooze,
+      e.hidden,
     );
     snapshot(get(id));
     return get(id);
   }
   function update(id, input) {
+    assertObject(input);
     const old = get(id);
     if (!old)
       throw Object.assign(new Error("Entry not found"), { status: 404 });
@@ -95,9 +120,9 @@ export function openStore(dir) {
       e.nextAction,
       e.date,
       new Date().toISOString(),
-      input.deleted === 1 ? 1 : 0,
-      String(input.snooze || ""),
-      input.hidden === 1 ? 1 : 0,
+      e.deleted,
+      e.snooze,
+      e.hidden,
       id,
     );
     snapshot(get(id));
@@ -105,7 +130,12 @@ export function openStore(dir) {
   }
   return { db, get, create, update, snapshot };
 }
+function assertObject(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new Error("Request body must be a JSON object");
+}
 function validate(input) {
+  assertObject(input);
   const e = {};
   for (const key of [
     "title",
@@ -138,11 +168,35 @@ function validate(input) {
     [e.goal, e.handoff, e.nextAction].some((s) => s.length > 20000)
   )
     throw new Error("Entry is too large");
-  if (e.type === "journal") {
-    e.category = "Life areas";
+  if (
+    !["planned", "active", "paused", "completed", "archived"].includes(e.status)
+  )
+    throw new Error("Invalid status");
+  if (e.area && !areas.includes(e.area)) throw new Error("Invalid life area");
+  if (
+    e.type === "journal" ||
+    (e.category === "Life areas" && e.area === "Journal")
+  ) {
+    e.type = "journal";
+    if (e.category !== "Archive") e.category = "Life areas";
     e.area = "Journal";
   }
-  if (e.date && !/^\d{4}-\d{2}-\d{2}$/.test(e.date))
+  if (
+    e.date &&
+    (!/^\d{4}-\d{2}-\d{2}$/.test(e.date) ||
+      !Number.isFinite(Date.parse(e.date + "T12:00:00Z")) ||
+      new Date(e.date + "T12:00:00Z").toISOString().slice(0, 10) !== e.date)
+  )
     throw new Error("Invalid date");
+  for (const key of ["hidden", "deleted"]) {
+    e[key] = input[key] ?? 0;
+    if (e[key] !== 0 && e[key] !== 1) throw new Error("Invalid " + key);
+  }
+  e.snooze = input.snooze ?? "";
+  if (
+    typeof e.snooze !== "string" ||
+    (e.snooze && !Number.isFinite(Date.parse(e.snooze)))
+  )
+    throw new Error("Invalid snooze date");
   return e;
 }

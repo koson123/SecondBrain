@@ -9,6 +9,7 @@ import {
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createApp } from "../server/server.mjs";
+import { DatabaseSync } from "node:sqlite";
 import { restore } from "./restore.mjs";
 
 const [command, input, target] = process.argv.slice(2);
@@ -28,7 +29,10 @@ if (command === "export") {
     zip.file("manifest.json", JSON.stringify(manifest, null, 2));
     for (const file of Object.keys(manifest.files))
       zip.file(file, readFileSync(join(base, file)));
-    const notes = app.store.db.prepare("SELECT * FROM entries").all();
+    const savedDb = new DatabaseSync(join(base, "brain.sqlite"), {
+      readOnly: true,
+    });
+    const notes = savedDb.prepare("SELECT * FROM entries").all();
     for (const e of notes)
       zip.file(
         "readable-notes/" + e.id + ".md",
@@ -39,15 +43,13 @@ if (command === "export") {
       "metadata.json",
       JSON.stringify(
         Object.fromEntries(
-          tables.map((t) => [
-            t,
-            app.store.db.prepare("SELECT * FROM " + t).all(),
-          ]),
+          tables.map((t) => [t, savedDb.prepare("SELECT * FROM " + t).all()]),
         ),
         null,
         2,
       ),
     );
+    savedDb.close();
     zip.file(
       "README.txt",
       "Complete Second Brain portable snapshot. Includes readable notes, source records in the database, original import objects, and attachments. Contains private information including account credentials; store encrypted. Restore using npm run portable-import -- FILE.zip NEW_DATA_DIRECTORY.",

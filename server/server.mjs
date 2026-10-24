@@ -20,7 +20,7 @@ import { resolve, join, extname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnvFile } from "node:process";
 import { openStore, categories, areas } from "./store.mjs";
-import { parseExport, hash } from "./importer.mjs";
+import { parseExport, hash, messageText } from "./importer.mjs";
 import { resolveStaticPath } from "./static.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -87,8 +87,18 @@ export function createApp({
     }
     return Buffer.concat(chunks);
   }
-  const transactionData = async (req) =>
-    JSON.parse((await body(req)).toString() || "{}");
+  const transactionData = async (req) => {
+    let data;
+    try {
+      data = JSON.parse((await body(req)).toString() || "{}");
+    } catch (error) {
+      if (error.status) throw error;
+      throw new Error("Request body must contain valid JSON");
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data))
+      throw new Error("Request body must be a JSON object");
+    return data;
+  };
   const originalPath = (digest) => join(dir, "objects", digest);
   function putObject(buf) {
     const digest = hash(buf);
@@ -148,11 +158,19 @@ export function createApp({
       "Content-Security-Policy",
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",
     );
-    const url = new URL(req.url, "http://localhost");
+    let url;
+    try {
+      url = new URL(req.url, "http://localhost");
+    } catch {
+      return json(res, 400, { error: "Invalid request URL" });
+    }
     const path = url.pathname;
     const method = req.method;
     try {
-      if (path === "/api/health") return json(res, 200, { ok: true });
+      if (path === "/api/health")
+        return ["GET", "HEAD"].includes(method)
+          ? json(res, 200, { ok: true })
+          : json(res, 405, { error: "Method not allowed" });
       if (path.startsWith("/api/")) {
         if (!["GET", "HEAD"].includes(method)) {
           const expected =
@@ -199,7 +217,7 @@ export function createApp({
           )
             throw new Error("Use a password between 12 and 256 characters.");
           if (path === "/api/setup") {
-            if (hasOwner)
+            if (db.prepare("SELECT id FROM owner").get())
               return json(res, 409, { error: "Owner already configured" });
             const configuredToken =
               typeof setupToken === "string" ? setupToken.trim() : "";
@@ -257,6 +275,28 @@ export function createApp({
           );
           return json(res, 200, { ok: true });
         }
+        const routeMethods = [
+          [
+            /^\/api\/(config|stats|graph|rediscover|protection|export|imports)$/,
+            ["GET"],
+          ],
+          [/^\/api\/entries$/, ["GET", "POST"]],
+          [/^\/api\/entries\/[^/]+$/, ["GET", "PATCH"]],
+          [/^\/api\/entries\/[^/]+\/(history|source|references)$/, ["GET"]],
+          [/^\/api\/entries\/[^/]+\/attachments$/, ["GET", "POST"]],
+          [/^\/api\/(attachments|imports)\/[^/]+$/, ["GET", "HEAD"]],
+          [/^\/api\/(connections|layout)$/, ["GET", "POST"]],
+          [/^\/api\/connections\/[^/]+$/, ["DELETE"]],
+          [
+            /^\/api\/(import\/(preview|commit)|extract|snapshot|logout)$/,
+            ["POST"],
+          ],
+        ];
+        const allowed = routeMethods.find(([pattern]) =>
+          pattern.test(path),
+        )?.[1];
+        if (allowed && !allowed.includes(method))
+          return json(res, 405, { error: "Method not allowed" });
         if (path === "/api/config")
           return json(res, 200, { categories, areas });
         if (path === "/api/entries" && method === "GET") {
@@ -265,7 +305,10 @@ export function createApp({
           const cat = url.searchParams.get("category"),
             area = url.searchParams.get("area"),
             q = url.searchParams.get("q");
-          if (cat) {
+          if (
+            cat &&
+            !(cat === "Archive" && url.searchParams.get("trash") === "1")
+          ) {
             filters.push("category=?");
             args.push(cat);
           }
@@ -273,30 +316,50 @@ export function createApp({
             filters.push("area=?");
             args.push(area);
           }
-          if (url.searchParams.get("journal") !== "1" && area !== "Journal")
+          if (
+            url.searchParams.get("journal") !== "1" &&
+            area !== "Journal" &&
+            cat !== "Archive" &&
+            url.searchParams.get("trash") !== "1"
+          )
             filters.push("type!='journal'");
-          if (q) {
-            const term = q
-              .trim()
-              .split(/\s+/)
-              .filter(Boolean)
-              .map((t) => '"' + t.replaceAll('"', '""') + '"*')
+          if (url.searchParams.get("active") === "1")
+            filters.push("category!='Archive'");
+          let order =
+            area === "Journal"
+              ? "date DESC,created DESC,id"
+              : "updated DESC,id";
+          const orderArgs = [];
+          if (q?.trim()) {
+            const tokens = q.match(/[\p{L}\p{N}_]+/gu) || [];
+            if (!tokens.length)
+              return json(res, 200, { entries: [], total: 0 });
+            const term = tokens
+              .map((token) => '"' + token + '"*')
               .join(" AND ");
-            if (term) {
-              filters.push(
-                "(id IN (SELECT id FROM entry_fts WHERE entry_fts MATCH ?) OR id IN (SELECT entryId FROM source_fts WHERE source_fts MATCH ?))",
-              );
-              args.push(term, term);
-            }
-          }
-          const offset = Math.max(
-              0,
-              Number(url.searchParams.get("offset")) || 0,
-            ),
-            limit = Math.min(
-              100,
-              Math.max(1, Number(url.searchParams.get("limit")) || 60),
+            filters.push(
+              "(id IN (SELECT id FROM entry_fts WHERE entry_fts MATCH ?) OR id IN (SELECT entryId FROM source_fts WHERE source_fts MATCH ?))",
             );
+            args.push(term, term);
+            order =
+              "CASE WHEN title=? COLLATE NOCASE THEN 0 ELSE 1 END," + order;
+            orderArgs.push(q.trim());
+          }
+          function numberParam(
+            name,
+            fallback,
+            min,
+            max = Number.MAX_SAFE_INTEGER,
+          ) {
+            const raw = url.searchParams.get(name);
+            if (raw === null) return fallback;
+            const n = Number(raw);
+            if (!Number.isSafeInteger(n) || n < min)
+              throw new Error("Invalid " + name);
+            return Math.min(n, max);
+          }
+          const offset = numberParam("offset", 0, 0),
+            limit = numberParam("limit", 60, 1, 100);
           const total = db
             .prepare(
               `SELECT count(*) n FROM entries WHERE ${filters.join(" AND ")}`,
@@ -305,9 +368,9 @@ export function createApp({
           return json(res, 200, {
             entries: db
               .prepare(
-                `SELECT * FROM entries WHERE ${filters.join(" AND ")} ORDER BY ${area === "Journal" ? "date DESC, created DESC" : "updated DESC"} LIMIT ? OFFSET ?`,
+                `SELECT * FROM entries WHERE ${filters.join(" AND ")} ORDER BY ${order} LIMIT ? OFFSET ?`,
               )
-              .all(...args, limit, offset),
+              .all(...args, ...orderArgs, limit, offset),
             total,
           });
         }
@@ -318,6 +381,27 @@ export function createApp({
             201,
             tx(() => create(input)),
           );
+        }
+        if (path === "/api/rediscover") {
+          const n = Number(url.searchParams.get("offset") || 0);
+          if (!Number.isSafeInteger(n) || n < 0)
+            throw new Error("Invalid offset");
+          const where =
+            "category='Ideas' AND type!='journal' AND deleted=0 AND hidden=0 AND (snooze='' OR snooze<=?)";
+          const now = new Date().toISOString();
+          const total = db
+            .prepare("SELECT count(*) n FROM entries WHERE " + where)
+            .get(now).n;
+          const entry = total
+            ? db
+                .prepare(
+                  "SELECT * FROM entries WHERE " +
+                    where +
+                    " ORDER BY updated,id LIMIT 1 OFFSET ?",
+                )
+                .get(now, n % total)
+            : null;
+          return json(res, 200, { entry, total });
         }
         if (path === "/api/stats") {
           const counts = Object.fromEntries(
@@ -435,19 +519,30 @@ export function createApp({
             remaining: Math.max(0, neighbors.length - limit),
           });
         }
-        if (path === "/api/connections" && method === "GET")
+        if (path === "/api/connections" && method === "GET") {
+          const focus = url.searchParams.get("entry");
+          const extra = focus ? " AND (c.fromId=? OR c.toId=?)" : "";
           return json(
             res,
             200,
             db
               .prepare(
-                "SELECT c.* FROM connections c JOIN entries a ON a.id=c.fromId JOIN entries b ON b.id=c.toId WHERE a.deleted=0 AND b.deleted=0 AND a.type!='journal' AND b.type!='journal' LIMIT 10000",
+                "SELECT c.* FROM connections c JOIN entries a ON a.id=c.fromId JOIN entries b ON b.id=c.toId WHERE a.deleted=0 AND b.deleted=0 AND a.type!='journal' AND b.type!='journal'" +
+                  extra +
+                  " ORDER BY c.id LIMIT 10000",
               )
-              .all(),
+              .all(...(focus ? [focus, focus] : [])),
           );
+        }
         if (path === "/api/connections" && method === "POST") {
           const b = await transactionData(req);
-          if (!get(b.fromId) || !get(b.toId) || b.fromId === b.toId)
+          if (
+            !get(b.fromId) ||
+            !get(b.toId) ||
+            get(b.fromId).deleted ||
+            get(b.toId).deleted ||
+            b.fromId === b.toId
+          )
             throw new Error("Choose two different existing entries");
           if (typeof b.label !== "string" || b.label.length > 60)
             throw new Error("Invalid relationship");
@@ -477,9 +572,29 @@ export function createApp({
           );
         if (path === "/api/layout" && method === "POST") {
           const b = await transactionData(req);
+          if (
+            typeof b.scope !== "string" ||
+            !b.scope ||
+            b.scope.length > 100 ||
+            !b.value ||
+            typeof b.value !== "object" ||
+            Array.isArray(b.value) ||
+            Object.keys(b.value).length > 10000
+          )
+            throw new Error("Invalid layout");
+          for (const value of Object.values(b.value))
+            if (
+              !value ||
+              typeof value !== "object" ||
+              !Number.isFinite(value.x) ||
+              !Number.isFinite(value.y) ||
+              Math.abs(value.x) > 10000000 ||
+              Math.abs(value.y) > 10000000
+            )
+              throw new Error("Invalid node position");
           db.prepare(
             "INSERT INTO layouts VALUES(?,?) ON CONFLICT(scope) DO UPDATE SET value=excluded.value",
-          ).run(String(b.scope).slice(0, 100), JSON.stringify(b.value));
+          ).run(b.scope, JSON.stringify(b.value));
           return json(res, 200, { ok: true });
         }
         if (path === "/api/import/preview" && method === "POST") {
@@ -517,11 +632,16 @@ export function createApp({
           const duplicate = db
             .prepare("SELECT result FROM imports WHERE digest=?")
             .get(hash(p.digest + ns));
-          if (duplicate)
+          if (duplicate) {
+            rmSync(join(dir, "staging", b.id), { force: true });
+            staged.delete(b.id);
             return json(res, 200, {
-              ...JSON.parse(duplicate.result),
+              added: 0,
+              updated: 0,
+              skipped: p.items.length,
               duplicate: true,
             });
+          }
           const original = putObject(readFileSync(join(dir, "staging", b.id)));
           const result = tx(() => {
             let added = 0,
@@ -616,8 +736,7 @@ export function createApp({
           const raw = JSON.parse(source.raw);
           const node = raw.mapping[b.messageId];
           if (!node?.message) throw new Error("Message not found");
-          const parts = node.message.content?.parts || [];
-          const text = parts.filter((p) => typeof p === "string").join("\n");
+          const text = messageText(node.message);
           const entry = tx(() => {
             const e = create({
               title: b.title || "Thought from a conversation",
@@ -682,6 +801,11 @@ export function createApp({
       }
       if (!["GET", "HEAD"].includes(method))
         return json(res, 405, { error: "Method not allowed" });
+      if (
+        path.split("/").some((part) => part.startsWith(".")) ||
+        /^\/(data|objects|server|scripts)(\/|$)/.test(path)
+      )
+        return json(res, 404, { error: "Not found" });
       const dist = join(root, "dist");
       const safe = resolveStaticPath(dist, path);
       if (!safe) return json(res, 404, { error: "Not found" });

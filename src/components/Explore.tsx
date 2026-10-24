@@ -41,8 +41,19 @@ export function Explore({
     [limit, setLimit] = useState(6),
     [layout, setLayout] = useState<any>({}),
     [history, setHistory] = useState<string[]>([]);
+  const [error, setError] = useState("");
   useEffect(() => {
-    api("/layout?scope=" + encodeURIComponent(scope)).then(setLayout);
+    let cancelled = false;
+    api("/layout?scope=" + encodeURIComponent(scope))
+      .then((value) => {
+        if (!cancelled) setLayout(value);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [scope]);
   const [neighborhood, setNeighborhood] = useState<any>(null);
   const [flow, setFlow] = useState<any>(null);
@@ -134,6 +145,11 @@ export function Explore({
     );
   return (
     <div className="explore-shell">
+      {error && (
+        <div className="notice error" role="alert">
+          {error}
+        </div>
+      )}
       <div className="graph-toolbar">
         <span>
           <Network size={15} /> {visible.length} connected thoughts
@@ -189,7 +205,11 @@ export function Explore({
           onNodeDragStop={(_, node) => {
             const value = { ...layout, [node.id]: node.position };
             setLayout(value);
-            send("/layout", { scope, value });
+            send("/layout", { scope, value })
+              .then(() => setError(""))
+              .catch((e) =>
+                setError("Position is only saved in this tab: " + e.message),
+              );
           }}
           fitView
           fitViewOptions={{ padding: 0.3 }}

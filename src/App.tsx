@@ -83,6 +83,7 @@ export default function App() {
       localStorage.getItem("brain-theme") || "light",
     ),
     [rediscover, setRediscover] = useState(0),
+    [discoveryEntry, setDiscoveryEntry] = useState<Entry | null>(null),
     [loadedScope, setLoadedScope] = useState("");
   const scope = JSON.stringify([view, area, query, route.journal, route.trash]);
   const scopeRef = useRef(scope);
@@ -123,6 +124,7 @@ export default function App() {
         limit: "60",
         offset: String(offset),
       });
+      if (view === "Home") p.set("active", "1");
       if (CATS.includes(view)) p.set("category", view);
       if (area) p.set("area", area);
       if (query) p.set("q", query);
@@ -165,8 +167,21 @@ export default function App() {
       const rows = await pending();
       setPendingCount(rows.length);
       for (const row of rows) {
-        await send("/entries", row);
-        await dequeue(row.id);
+        try {
+          await send("/entries", row);
+          await dequeue(row.id);
+        } catch (error: any) {
+          if (error.status === 401) {
+            setSession({ authenticated: false, setup: false });
+            throw error;
+          }
+          if (!error.status || error.status >= 500) throw error;
+          setError(
+            "A pending note could not upload: " +
+              error.message +
+              " Download pending notes to keep a separate copy.",
+          );
+        }
       }
       setPendingCount((await pending()).length);
       if (rows.length) await refresh();
@@ -280,13 +295,22 @@ export default function App() {
   const regular = visible.filter(
     (e) => e.category !== "Archive" && e.type !== "journal" && !e.deleted,
   );
-  const ideas = regular.filter(
-    (e) =>
-      e.category === "Ideas" &&
-      !e.hidden &&
-      (!e.snooze || e.snooze < new Date().toISOString()),
-  );
-  const idea = ideas[rediscover % Math.max(1, ideas.length)];
+  const idea = discoveryEntry;
+  useEffect(() => {
+    let cancelled = false;
+    if (view === "Home" && session?.authenticated) {
+      api("/rediscover?offset=" + rediscover)
+        .then((data) => {
+          if (!cancelled) setDiscoveryEntry(data.entry);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(e.message);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [view, session?.authenticated, rediscover, entries]);
   if (!session)
     return error ? (
       <OfflineCapture />
@@ -390,6 +414,7 @@ export default function App() {
           </button>
           <button
             className="primary compact"
+            aria-label="New note"
             onClick={() =>
               newEntry(
                 area === "Journal"
@@ -410,7 +435,7 @@ export default function App() {
             onChange={(e) => go(routeFor(e.target.value))}
           >
             <option value="Home">Desk</option>
-            {CATS.map((c) => (
+            {[...CATS, "Imports", "Settings", "Search"].map((c) => (
               <option key={c}>{c}</option>
             ))}
           </select>
@@ -449,23 +474,33 @@ export default function App() {
               idea={idea}
               onAnother={() => setRediscover((n) => n + 1)}
               onLater={async () => {
-                await send(
-                  "/entries/" + idea.id,
-                  {
-                    ...idea,
-                    snooze: new Date(Date.now() + 7 * 86400000).toISOString(),
-                  },
-                  "PATCH",
-                );
-                refresh();
+                if (!idea) return;
+                try {
+                  await send(
+                    "/entries/" + idea.id,
+                    {
+                      ...idea,
+                      snooze: new Date(Date.now() + 7 * 86400000).toISOString(),
+                    },
+                    "PATCH",
+                  );
+                  await refresh();
+                } catch (e: any) {
+                  setError(e.message);
+                }
               }}
               onHide={async () => {
-                await send(
-                  "/entries/" + idea.id,
-                  { ...idea, hidden: 1 },
-                  "PATCH",
-                );
-                refresh();
+                if (!idea) return;
+                try {
+                  await send(
+                    "/entries/" + idea.id,
+                    { ...idea, hidden: 1 },
+                    "PATCH",
+                  );
+                  await refresh();
+                } catch (e: any) {
+                  setError(e.message);
+                }
               }}
             />
           ) : CATS.includes(view) ? (
@@ -488,7 +523,7 @@ export default function App() {
             <SearchPage
               query={query}
               entries={visible}
-              total={total}
+              total={loadedScope === scope ? total : 0}
               includeJournal={route.journal}
               onJournal={(yes: boolean) =>
                 changeQuery({ journal: yes ? "1" : null }, true)

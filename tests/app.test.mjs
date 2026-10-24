@@ -162,8 +162,8 @@ test("authentication, origin checks, persistence, idempotent create, conflicts, 
   ).data;
   assert.equal(first.revision, 1);
   assert.equal(
-    (await h.post("/entries", { id: "fixed-id", body: "retry" })).data.body,
-    "original",
+    (await h.post("/entries", { id: "fixed-id", body: "retry" })).status,
+    409,
   );
   const edited = await h.post(
     "/entries/fixed-id",

@@ -2,6 +2,22 @@ import JSZip from "jszip";
 import { createHash } from "node:crypto";
 
 export const hash = (value) => createHash("sha256").update(value).digest("hex");
+export function messageText(message) {
+  const content = message?.content;
+  if (Array.isArray(content?.parts))
+    return content.parts
+      .map((p) =>
+        typeof p === "string"
+          ? p
+          : typeof p?.text === "string"
+            ? p.text
+            : "[Non-text content — see original export]",
+      )
+      .join("\n");
+  return typeof content?.text === "string"
+    ? content.text
+    : "[Non-text message]";
+}
 const MAX = 100 * 1024 * 1024;
 export async function parseExport(buffer, name = "conversations.json") {
   if (buffer.length > MAX)
@@ -69,20 +85,13 @@ export async function parseExport(buffer, name = "conversations.json") {
       .filter(([, n]) => n?.message)
       .map(([id, n]) => {
         const m = n.message;
-        const parts = Array.isArray(m.content?.parts) ? m.content.parts : [];
-        const text = parts
-          .map((p) =>
-            typeof p === "string"
-              ? p
-              : "[Non-text content — see original export]",
-          )
-          .join("\n");
+        const text = messageText(m);
         return {
           id,
           parent: n.parent || null,
           children: n.children || [],
           role: String(m.author?.role || "unknown"),
-          text: text || m.content?.text || "[Non-text message]",
+          text,
           created: m.create_time || null,
         };
       });

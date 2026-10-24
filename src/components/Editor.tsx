@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Plus,
   ArrowUpRight,
@@ -15,6 +15,23 @@ import {
 import { CATS, AREA, today, date, Icon, download } from "../shared";
 import { api, send, type Entry, type Connection } from "../api";
 import { useDialogFocus } from "./Dialog";
+const contentFields = [
+  "title",
+  "body",
+  "category",
+  "type",
+  "area",
+  "status",
+  "goal",
+  "handoff",
+  "nextAction",
+  "date",
+  "deleted",
+  "snooze",
+  "hidden",
+];
+const sameContent = (a: Entry, b: Entry) =>
+  contentFields.every((key) => (a as any)[key] === (b as any)[key]);
 export function Editor({
   initial,
   onClose,
@@ -27,7 +44,17 @@ export function Editor({
         const draft = JSON.parse(
           localStorage.getItem("brain-draft-" + initial.id) || "null",
         );
-        return draft || initial;
+        if (
+          draft &&
+          draft.id === initial.id &&
+          typeof draft.body === "string" &&
+          typeof draft.title === "string" &&
+          Number.isSafeInteger(draft.revision)
+        ) {
+          const merged = { ...initial, ...draft };
+          return sameContent(merged, initial) ? initial : merged;
+        }
+        return initial;
       } catch {
         return initial;
       }
@@ -43,59 +70,131 @@ export function Editor({
     [target, setTarget] = useState(""),
     [relation, setRelation] = useState("related"),
     [references, setReferences] = useState<any[]>([]),
+    [ownConnections, setOwnConnections] = useState<Connection[] | null>(null),
     [tab, setTab] = useState(initial.openSource ? "source" : "note"),
-    [saving, setSaving] = useState(false);
-  const dirty = JSON.stringify(entry) !== JSON.stringify(saved);
+    [saving, setSaving] = useState(false),
+    [saveBlocked, setSaveBlocked] = useState(false);
+  const latest = useRef(entry),
+    acknowledged = useRef(saved),
+    savingRef = useRef(false),
+    mounted = useRef(true),
+    deviceDraft = useRef(true);
+  latest.current = entry;
+  acknowledged.current = saved;
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const dirty = !sameContent(entry, saved);
   const localKey = "brain-draft-" + entry.id;
   useEffect(() => {
-    api("/entries/" + entry.id + "/source").then(setSource);
-    api("/entries/" + entry.id + "/attachments").then(setAttachments);
-    api("/entries/" + entry.id + "/references").then(setReferences);
-    api("/entries?limit=100").then((d) =>
-      setRelatedOptions(d.entries.filter((e: Entry) => e.id !== entry.id)),
-    );
+    let cancelled = false;
+    const requests = [
+      api("/entries/" + entry.id + "/source"),
+      api("/entries/" + entry.id + "/attachments"),
+      api("/entries/" + entry.id + "/references"),
+      api("/entries?limit=100"),
+      api("/connections?entry=" + encodeURIComponent(entry.id)),
+    ];
+    Promise.allSettled(requests).then((results) => {
+      if (cancelled) return;
+      const setters = [
+        setSource,
+        setAttachments,
+        setReferences,
+        (value: any) =>
+          setRelatedOptions(
+            value.entries.filter((e: Entry) => e.id !== entry.id),
+          ),
+        setOwnConnections,
+      ];
+      results.forEach((result, i) => {
+        if (result.status === "fulfilled") setters[i](result.value);
+        else
+          setError(
+            "Could not load related information: " + result.reason.message,
+          );
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [entry.id]);
   const change = (patch: Partial<Entry>) => {
     const next = { ...entry, ...patch };
+    latest.current = next;
     setEntry(next);
     try {
       localStorage.setItem(localKey, JSON.stringify(next));
+      deviceDraft.current = true;
       setStatus("Draft saved on this device");
     } catch {
+      deviceDraft.current = false;
       setError(
         "Device storage is full. Keep this window open and save to the server.",
       );
     }
   };
   async function save() {
+    if (savingRef.current) return;
+    const sent = latest.current;
+    if (sameContent(sent, acknowledged.current)) return;
+    savingRef.current = true;
     setSaving(true);
+    setSaveBlocked(false);
     try {
-      const next = await send("/entries/" + entry.id, entry, "PATCH");
-      setSaved(next);
-      setEntry((current) =>
-        JSON.stringify(current) === JSON.stringify(entry)
+      const next = await send("/entries/" + sent.id, sent, "PATCH");
+      const current = latest.current;
+      const merged =
+        sameContent(current, sent) && current.revision === sent.revision
           ? next
-          : { ...current, revision: next.revision },
-      );
-      localStorage.removeItem(localKey);
-      setStatus("Saved to server");
-      await onChange(next);
-    } catch (e: any) {
-      setError(e.message);
-      setStatus(
-        e.status === 409
-          ? "Conflict — draft preserved"
-          : "Save failed — draft preserved",
-      );
+          : { ...current, revision: next.revision, updated: next.updated };
+      latest.current = merged;
+      acknowledged.current = next;
+      if (!sameContent(merged, next)) {
+        localStorage.setItem(localKey, JSON.stringify(merged));
+        deviceDraft.current = true;
+      } else localStorage.removeItem(localKey);
+      if (mounted.current) {
+        setSaved(next);
+        setEntry(merged);
+        setError("");
+        setStatus(
+          sameContent(merged, next)
+            ? "Saved to server"
+            : "Newer changes saved on this device",
+        );
+        try {
+          await onChange(next);
+        } catch (error: any) {
+          if (mounted.current)
+            setError(
+              "Note saved, but the list could not refresh: " + error.message,
+            );
+        }
+      }
+    } catch (error: any) {
+      if (mounted.current) {
+        setError(error.message);
+        setSaveBlocked(true);
+        setStatus(
+          error.status === 409
+            ? "Conflict — draft preserved"
+            : "Save failed — draft preserved",
+        );
+      }
     } finally {
-      setSaving(false);
+      savingRef.current = false;
+      if (mounted.current) setSaving(false);
     }
   }
   useEffect(() => {
-    if (!dirty) return;
-    const t = setTimeout(save, 1600);
-    return () => clearTimeout(t);
-  }, [entry]);
+    if (!dirty || saving || saveBlocked) return;
+    const timer = setTimeout(save, 1600);
+    return () => clearTimeout(timer);
+  }, [entry, saving, saveBlocked]);
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
       if (dirty) {
@@ -110,14 +209,16 @@ export function Editor({
     if (
       dirty &&
       !confirm(
-        "Your draft is saved on this device. Close without uploading it yet?",
+        deviceDraft.current
+          ? "Your draft is saved on this device. Close without uploading it yet?"
+          : "This draft is only in this window because device storage failed. Close and discard it?",
       )
     )
       return;
     onClose();
   };
   const dialogRef = useDialogFocus(close);
-  const related = connections.filter(
+  const related = (ownConnections || connections).filter(
     (l: Connection) => l.fromId === entry.id || l.toId === entry.id,
   );
   async function extract(messageId: string) {
@@ -128,7 +229,7 @@ export function Editor({
         category: "Ideas",
         title: "Idea from " + entry.title,
       });
-      onOpen(e);
+      if (mounted.current) onOpen(e);
     } catch (e: any) {
       setError(e.message);
     }
@@ -186,7 +287,7 @@ export function Editor({
             · {date(entry.created)}
           </div>
           {error && (
-            <div className="notice error">
+            <div className="notice error" role="alert">
               {error}
               <div>
                 <button onClick={() => download(entry, "preserved-draft.json")}>
@@ -198,6 +299,7 @@ export function Editor({
                       const copy = await send("/entries", {
                         ...entry,
                         id: crypto.randomUUID(),
+                        deleted: 0,
                         title: entry.title + " (conflict copy)",
                       });
                       localStorage.removeItem(localKey);
@@ -211,12 +313,19 @@ export function Editor({
                 </button>
                 <button
                   onClick={async () => {
-                    const latest = await api("/entries/" + entry.id);
-                    download(entry, "preserved-draft.json");
-                    localStorage.removeItem(localKey);
-                    setEntry(latest);
-                    setSaved(latest);
-                    setError("");
+                    try {
+                      const current = await api("/entries/" + entry.id);
+                      download(latest.current, "preserved-draft.json");
+                      localStorage.removeItem(localKey);
+                      latest.current = current;
+                      acknowledged.current = current;
+                      setEntry(current);
+                      setSaved(current);
+                      setError("");
+                      setSaveBlocked(false);
+                    } catch (error: any) {
+                      setError(error.message);
+                    }
                   }}
                 >
                   Download draft & reload latest
@@ -236,6 +345,7 @@ export function Editor({
                 <label>
                   Keep in
                   <select
+                    aria-label="Keep in"
                     value={entry.category}
                     onChange={(e) =>
                       change({
@@ -248,9 +358,11 @@ export function Editor({
                               : entry.type,
                       })
                     }
-                    disabled={entry.type === "journal"}
                   >
-                    {CATS.map((c) => (
+                    {(entry.type === "journal"
+                      ? ["Life areas", "Archive"]
+                      : CATS
+                    ).map((c) => (
                       <option key={c}>{c}</option>
                     ))}
                   </select>
@@ -259,6 +371,7 @@ export function Editor({
                   <label>
                     Life area
                     <select
+                      aria-label="Life area"
                       value={entry.area}
                       onChange={(e) =>
                         change({
@@ -296,6 +409,7 @@ export function Editor({
                   <label>
                     Desired outcome
                     <input
+                      aria-label="Desired outcome"
                       value={entry.goal}
                       onChange={(e) => change({ goal: e.target.value })}
                     />
@@ -303,6 +417,7 @@ export function Editor({
                   <label>
                     Where I stopped
                     <textarea
+                      aria-label="Where I stopped"
                       value={entry.handoff}
                       onChange={(e) => change({ handoff: e.target.value })}
                     />
@@ -310,6 +425,7 @@ export function Editor({
                   <label>
                     Next small step
                     <input
+                      aria-label="Next small step"
                       value={entry.nextAction}
                       onChange={(e) => change({ nextAction: e.target.value })}
                     />
@@ -317,6 +433,7 @@ export function Editor({
                   <label>
                     Status
                     <select
+                      aria-label="Status"
                       value={entry.status}
                       onChange={(e) => change({ status: e.target.value })}
                     >
@@ -354,13 +471,21 @@ export function Editor({
                     <button
                       className="related-row"
                       key={r.messageId}
-                      onClick={async () =>
-                        onOpen({
-                          ...(await api("/entries/" + r.sourceEntryId)),
-                          openSource: true,
-                          sourceMessage: r.messageId,
-                        })
-                      }
+                      onClick={async () => {
+                        try {
+                          const original = await api(
+                            "/entries/" + r.sourceEntryId,
+                          );
+                          if (mounted.current)
+                            onOpen({
+                              ...original,
+                              openSource: true,
+                              sourceMessage: r.messageId,
+                            });
+                        } catch (e: any) {
+                          if (mounted.current) setError(e.message);
+                        }
+                      }}
                     >
                       <FileText size={16} /> Original conversation · message{" "}
                       {r.messageId.slice(0, 10)}
@@ -389,10 +514,20 @@ export function Editor({
                       <button
                         aria-label="Remove connection"
                         onClick={async () => {
-                          await api("/connections/" + l.id, {
-                            method: "DELETE",
-                          });
-                          onChange(saved);
+                          try {
+                            await api("/connections/" + l.id, {
+                              method: "DELETE",
+                            });
+                            setOwnConnections(
+                              await api(
+                                "/connections?entry=" +
+                                  encodeURIComponent(entry.id),
+                              ),
+                            );
+                            if (mounted.current) await onChange(saved);
+                          } catch (error: any) {
+                            setError(error.message);
+                          }
                         }}
                       >
                         <X size={14} />
@@ -430,6 +565,7 @@ export function Editor({
                   </select>
                   <button
                     disabled={!target}
+                    aria-label="Add connection"
                     onClick={async () => {
                       try {
                         await send("/connections", {
@@ -438,7 +574,13 @@ export function Editor({
                           label: relation,
                         });
                         setTarget("");
-                        onChange(saved);
+                        setOwnConnections(
+                          await api(
+                            "/connections?entry=" +
+                              encodeURIComponent(entry.id),
+                          ),
+                        );
+                        await onChange(saved);
                       } catch (e: any) {
                         setError(e.message);
                       }
@@ -493,8 +635,14 @@ export function Editor({
                 <button
                   className="text-button"
                   onClick={async () => {
-                    setShowHistory(!showHistory);
-                    setHistory(await api("/entries/" + entry.id + "/history"));
+                    try {
+                      setHistory(
+                        await api("/entries/" + entry.id + "/history"),
+                      );
+                      setShowHistory(!showHistory);
+                    } catch (error: any) {
+                      setError(error.message);
+                    }
                   }}
                 >
                   Version history <ChevronRight size={15} />
@@ -528,7 +676,10 @@ export function Editor({
           >
             {entry.deleted ? <RefreshCw size={17} /> : <Trash2 size={17} />}
           </button>
-          <button onClick={() => download(entry, "thought.json")}>
+          <button
+            aria-label="Download note"
+            onClick={() => download(entry, "thought.json")}
+          >
             <Download size={15} />
           </button>
           <button
@@ -548,8 +699,12 @@ export function Editor({
 function Transcript({ source, onExtract, initialMessage }: any) {
   const raw = source.raw;
   const mapping = raw.mapping || {};
+  const currentNode =
+    typeof raw.current_node === "string" && mapping[raw.current_node]
+      ? raw.current_node
+      : null;
   const [branch, setBranch] = useState(
-    initialMessage || raw.current_node || Object.keys(mapping).at(-1),
+    initialMessage || currentNode || Object.keys(mapping).at(-1),
   );
   const leaves = Object.keys(mapping).filter(
     (id) => !mapping[id]?.children?.length,
@@ -560,7 +715,7 @@ function Transcript({ source, onExtract, initialMessage }: any) {
   while (cursor && mapping[cursor] && !seen.has(cursor)) {
     seen.add(cursor);
     const node = mapping[cursor];
-    if (node.message) active.unshift({ id: cursor, ...node.message });
+    if (node.message) active.unshift({ ...node.message, id: cursor });
     cursor = node.parent;
   }
   return (
@@ -571,12 +726,16 @@ function Transcript({ source, onExtract, initialMessage }: any) {
       </div>
       <label>
         Conversation branch
-        <select value={branch} onChange={(e) => setBranch(e.target.value)}>
-          {Array.from(new Set([initialMessage, raw.current_node, ...leaves]))
+        <select
+          aria-label="Conversation branch"
+          value={branch}
+          onChange={(e) => setBranch(e.target.value)}
+        >
+          {Array.from(new Set([initialMessage, currentNode, ...leaves]))
             .filter(Boolean)
             .map((id: any, i) => (
               <option key={id} value={id}>
-                {id === raw.current_node
+                {id === currentNode
                   ? "Current branch"
                   : id === initialMessage
                     ? "Referenced message"
@@ -589,19 +748,26 @@ function Transcript({ source, onExtract, initialMessage }: any) {
       {active.map((m) => (
         <article className={"message " + m.author?.role} key={m.id}>
           <div className="message-head">
-            <strong>{m.author?.role || "unknown"}</strong>
+            <strong>{String(m.author?.role || "unknown")}</strong>
             <button onClick={() => onExtract(m.id)}>
               Keep as an idea <Plus size={13} />
             </button>
           </div>
           <div className="message-text">
-            {(
-              m.content?.parts || [m.content?.text || "[Non-text content]"]
+            {(Array.isArray(m.content?.parts)
+              ? m.content.parts
+              : [
+                  typeof m.content?.text === "string"
+                    ? m.content.text
+                    : "[Non-text content]",
+                ]
             ).map((p: any, i: number) => (
               <React.Fragment key={i}>
                 {typeof p === "string"
                   ? p
-                  : "[Non-text content — preserved in original export]"}
+                  : typeof p?.text === "string"
+                    ? p.text
+                    : "[Non-text content — preserved in original export]"}
                 {"\n"}
               </React.Fragment>
             ))}
