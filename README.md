@@ -49,7 +49,7 @@ Original upload bytes, message authors, parent/child relationships, alternate br
 
 ZIP media stays preserved in the original ZIP, available under Settings → Export & sources. This release does **not** extract/render embedded media. JSON-only imports have no attachment bytes. HTML-only exports and unfamiliar schemas fail with a clear error. No automatic account synchronization: future chats need another export.
 
-Preview staging expires after an hour and is discarded on server restart. There is no long-running resumable importer yet; imports run atomically within the configured limit. Very large exports need splitting or a later streaming adapter.
+Preview staging expires after an hour; a restart requires selecting the file again. There is no long-running resumable importer yet; imports run atomically within the configured limit. Very large exports need splitting or a later streaming adapter.
 
 ## Offline capture
 
@@ -107,6 +107,8 @@ Compose binds only to `127.0.0.1:3000` and uses a persistent named volume. Put a
 ```bash
 npm test
 npm run build
+npx playwright install chromium
+npm run test:browser
 ```
 
 Tests exercise auth/origin rejection, idempotency, conflicts, Journal search isolation, JSON/ZIP imports, source revisions, roles/branches, source extraction, attachment persistence, and verified restore/corruption rejection. No real personal export is included in tests.

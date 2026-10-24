@@ -1,0 +1,55 @@
+{
+  "name": "secondbrain",
+  "version": "1.0.0",
+  "description": "A private, self-hosted visual second brain",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "server": "node --env-file-if-exists=.env server/server.mjs",
+    "build": "tsc --noEmit && vite build",
+    "start": "node --env-file-if-exists=.env server/server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "snapshot": "node --env-file-if-exists=.env scripts/snapshot.mjs",
+    "restore": "node scripts/restore.mjs",
+    "portable-export": "node --env-file-if-exists=.env scripts/portable.mjs export",
+    "portable-import": "node --env-file-if-exists=.env scripts/portable.mjs import",
+    "test:browser": "node tests/browser.mjs",
+    "format:check": "prettier --check src server scripts/*.mjs tests *.json vite.config.ts index.html public/sw.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/koson123/SecondBrain.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/koson123/SecondBrain/issues"
+  },
+  "homepage": "https://github.com/koson123/SecondBrain#readme",
+  "dependencies": {
+    "@xyflow/react": "^12.12.0",
+    "jszip": "^3.10.2",
+    "lucide-react": "^1.61.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "playwright": "^1.64.1",
+    "prettier": "^3.9.10",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
