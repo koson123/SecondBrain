@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { resolve, join, extname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadEnvFile } from "node:process";
 import { openStore, categories, areas } from "./store.mjs";
 import { parseExport, hash } from "./importer.mjs";
 import { resolveStaticPath } from "./static.mjs";
@@ -200,13 +201,20 @@ export function createApp({
           if (path === "/api/setup") {
             if (hasOwner)
               return json(res, 409, { error: "Owner already configured" });
+            const configuredToken =
+              typeof setupToken === "string" ? setupToken.trim() : "";
+            if (!configuredToken)
+              return json(res, 503, {
+                error:
+                  "The running server has no SETUP_TOKEN configured. Save SETUP_TOKEN in .env beside package.json, then stop and restart the server. Editing .env.example does not configure the server.",
+              });
             if (
-              !setupToken ||
               typeof b.token !== "string" ||
-              hash(b.token) !== hash(setupToken)
+              hash(b.token.trim()) !== hash(configuredToken)
             )
               return json(res, 403, {
-                error: "Setup token does not match the server configuration.",
+                error:
+                  "Setup token does not match the running server. Enter only the value after SETUP_TOKEN=, then restart the server if you changed .env. An existing SETUP_TOKEN environment variable overrides .env.",
               });
             const salt = randomBytes(32).toString("hex");
             db.prepare("INSERT INTO owner VALUES(1,?,?)").run(
@@ -725,6 +733,10 @@ export function createApp({
   return { server, store, snapshot };
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  // Support direct VS Code launches as well as npm start; existing process
+  // environment variables retain Node's standard precedence.
+  const envPath = join(root, ".env");
+  if (existsSync(envPath)) loadEnvFile(envPath);
   const app = createApp();
   app.server.listen(
     Number(process.env.PORT || 3000),

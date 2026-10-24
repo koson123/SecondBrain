@@ -51,9 +51,14 @@ const conversation = (title = "A little idea", extra = "") => ({
   },
 });
 
-async function harness(t) {
+async function harness(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), "brain-test-"));
-  const app = createApp({ dir, setupToken: "setup-secret", secure: false });
+  const app = createApp({
+    dir,
+    setupToken: "setup-secret",
+    secure: false,
+    ...options,
+  });
   app.server.listen(0, "127.0.0.1");
   await once(app.server, "listening");
   const origin = "http://127.0.0.1:" + app.server.address().port;
@@ -89,7 +94,7 @@ async function login(h) {
   assert.equal(
     (
       await h.post("/setup", {
-        token: "setup-secret",
+        token: "  setup-secret \n",
         password: "a long testing password",
       })
     ).status,
@@ -454,4 +459,18 @@ test("complete portable ZIP round-trip preserves entries and relations", async (
   } finally {
     restored.db.close();
   }
+});
+
+test("setup distinguishes missing server configuration from a mismatched token", async (t) => {
+  const h = await harness(t, { setupToken: null });
+  const result = await h.post("/setup", {
+    token: "a-token",
+    password: "a long testing password",
+  });
+  assert.equal(result.status, 503);
+  assert.match(result.data.error, /no SETUP_TOKEN configured/);
+  assert.equal(
+    h.app.store.db.prepare("SELECT count(*) n FROM owner").get().n,
+    0,
+  );
 });

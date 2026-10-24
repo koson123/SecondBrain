@@ -1113,7 +1113,10 @@ function Auth({ setup, onDone }: any) {
                 onChange={(e) => setToken(e.target.value)}
                 required
               />
-              <small>From SETUP_TOKEN in your server configuration.</small>
+              <small>
+                Enter only the value after SETUP_TOKEN= in .env (not
+                .env.example). Restart the server after changing it.
+              </small>
             </label>
           )}
           <label>
